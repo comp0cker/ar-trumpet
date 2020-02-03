@@ -13,10 +13,12 @@ extension float4x4 {
 public class LiveVC: UIViewController, ARSessionDelegate, ARSCNViewDelegate {
     let scene = SCNScene()
     public var arscn = ARSCNView(frame: CGRect(x: 0,y: 0,width: 640,height: 360))
-    var ship: SCNNode!
     
-    private var recentFocusSquarePositions: [SCNVector3] = []
-
+    var ship: SCNNode!
+    // var firstValve: SCNNode!
+    // var secondValve: SCNNode!
+    // var thirdValve: SCNNode!
+    
     override public func viewDidLoad() {
         super.viewDidLoad()
         
