@@ -32,7 +32,7 @@ enum Pitch: Int {
     10: G6
 */
 
-class Note {
+public class Note {
     var pitch: Pitch = .C
     var octave: Int = 5
     
@@ -48,7 +48,7 @@ class Note {
         The start mp3 is played immediately on button press. The mid mp3 is looped indefinitely until the button is released, which initiates the end mp3.
      */
     
-    init(valveOnePressed: Bool, valveTwoPressed: Bool, valveThreePressed: Bool, interval: Int) {
+    public init(valveOnePressed: Bool, valveTwoPressed: Bool, valveThreePressed: Bool, interval: Int) {
         if interval < 2 {
             octave = 4
         }
@@ -72,12 +72,12 @@ class Note {
         pitchShift(pitchShift: valvesToPitchShift(valveOnePressed: valveOnePressed, valveTwoPressed: valveTwoPressed, valveThreePressed: valveThreePressed))
     }
     
-    func playStart() {
+    public func playStart() {
         let fileName = "\(pitch)\(octave)_start.mp3"
         play(fileName: fileName)
     }
     
-    func playMid() {
+    public func playMid() {
         let fileName = "\(pitch)\(octave).mp3"
         let path = Bundle.main.path(forResource: "\(fileName)", ofType:nil)!
         let url = URL(fileURLWithPath: path)
@@ -91,11 +91,11 @@ class Note {
         }
     }
     
-    func stopMid() {
+    public func stopMid() {
         noteMidSound?.stop()
     }
     
-    func playEnd() {
+    public func playEnd() {
         let fileName = "\(pitch)\(octave)_end.mp3"
         play(fileName: fileName)
     }

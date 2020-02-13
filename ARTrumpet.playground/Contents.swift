@@ -1,24 +1,44 @@
+import Foundation
 import ARKit
 import SceneKit
 import UIKit
 import PlaygroundSupport
-
-extension float4x4 {
-    var translation: float3 {
-        let translation = self.columns.3
-        return float3(translation.x, translation.y, translation.z)
-    }
-}
+import Vision
+import CoreML
 
 public class LiveVC: UIViewController, ARSessionDelegate, ARSCNViewDelegate {
     let scene = SCNScene()
     //public var arscn = ARSCNView()
     public var arscn = ARSCNView(frame: CGRect(x: 0,y: 0,width: 640,height: 360))
     
+    
     var cubeNode: SCNNode!
-    // var firstValve: SCNNode!
-    // var secondValve: SCNNode!
-    // var thirdValve: SCNNode!
+    private var visionRequests = [VNRequest]()
+    var trackingRequests = [VNTrackObjectRequest]()
+    
+    private var timer: Timer! = Timer()
+    private var handState: String = "none"
+    let handsModel = HandsNew().model
+    var handBox: SCNBox!
+    var confidence: Float = 0.3
+    
+    var animating: Bool = false
+
+    func animate() {
+        
+        if animating { return }
+        animating = true
+        
+        let rotateOne = SCNAction.rotateBy(x: 0, y: CGFloat(Float.pi * 2), z: 0, duration: 5.0)
+        let repeatForever = SCNAction.repeatForever(rotateOne)
+
+        cubeNode.runAction(repeatForever)
+    }
+    
+    func stopAnimating() {
+        cubeNode.removeAllActions()
+        animating = false
+    }
     
     override public func viewDidLoad() {
         super.viewDidLoad()
@@ -27,7 +47,130 @@ public class LiveVC: UIViewController, ARSessionDelegate, ARSCNViewDelegate {
         
         setupSceneView()
         // addCoachingOverlay()
-        addTapGestureToSceneView()
+        // addTapGestureToSceneView()
+        setupCoreML()
+        timer = Timer.scheduledTimer(timeInterval: 0.1, target: self, selector: #selector(loopCoreMLUpdate), userInfo: nil, repeats: true)
+    }
+    
+    func setupCoreML() {
+        guard let selectedModel = try? VNCoreMLModel(for: handsModel) else {
+            renderAlert(message: "could not load model")
+            return
+        }
+        
+        let classificationRequest = VNCoreMLRequest(model: selectedModel,
+                                                    completionHandler: self.classificationCompleteHandler)
+        // classificationRequest.imageCropAndScaleOption = VNImageCropAndScaleOption.centerCrop // Crop from centre of images and scale to appropriate size.
+        self.visionRequests = [classificationRequest]
+    }
+    
+    func updateCoreML() {
+        let pixbuff : CVPixelBuffer? = (arscn.session.currentFrame?.capturedImage)
+        if pixbuff == nil { return }
+        
+        let deviceOrientation = UIDevice.current.orientation.getImagePropertyOrientation()
+        let imageRequestHandler = VNImageRequestHandler(cvPixelBuffer: pixbuff!, orientation: deviceOrientation,options: [:])
+        do {
+            try imageRequestHandler.perform(self.visionRequests)
+        } catch {
+            renderAlert(message: "imageRequestHandler processing failed")
+        }
+    }
+    
+    func handleHand(request: VNRequest, error: Error?) {
+        DispatchQueue.main.async {
+            //perform all the UI updates on the main queue
+            guard let observation = request.results?.first as? VNDetectedObjectObservation else {
+                return
+            }
+            
+            if self.trackingRequests.count > 0 {
+                for i in 0...self.trackingRequests.count - 1 {
+                    
+                    if self.trackingRequests[i].inputObservation.uuid == observation.uuid {
+                        self.trackingRequests[i].inputObservation = observation
+                    }
+                }
+            }
+            
+            //guard observation.confidence >= self.confidence else {
+            //    //arscn.removeMask(id: observation.uuid.uuidString)
+            //    return
+            //}
+            
+            //self.previewView.removeMask(id: observation.uuid.uuidString)
+            //self.previewView.drawHandBoundingBox(hand: observation, id: observation.uuid.uuidString, shortname: self.predictedHands[observation.uuid])
+            
+            let frameSize = CGSize(width: CVPixelBufferGetWidth(self.arscn.session.currentFrame!.capturedImage), height: CVPixelBufferGetHeight(self.arscn.session.currentFrame!.capturedImage))
+
+            let transform = CGAffineTransform(scaleX: 1, y: -1).translatedBy(x: 0, y: -frameSize.height)
+            let translate = CGAffineTransform.identity.scaledBy(x: frameSize.width, y: frameSize.height)
+            
+            let handbounds = observation.boundingBox.applying(translate).applying(transform)
+            
+            let zoom = handbounds.size.width / 3.0
+            
+            //let fr = CGRect(x: handbounds.origin.x - zoom, y: handbounds.origin.y - zoom - 5, width: handbounds.size.width + 2*zoom, height: handbounds.size.height + 2*zoom)
+            
+            self.handBox = SCNBox(width: handbounds.size.width + 2*zoom, height: handbounds.size.height + 2*zoom, length: 0.2, chamferRadius: 0)
+            self.handBox.materials.first?.diffuse.contents = UIColor.red.withAlphaComponent(0.5)
+            
+            let handBoxNode = SCNNode(geometry: self.handBox)
+            handBoxNode.position = SCNVector3Make(Float(handbounds.origin.x - zoom), Float(handbounds.origin.y - zoom - 5), 0)
+
+            self.arscn.scene.rootNode.addChildNode(handBoxNode)
+        }
+    }
+    
+    private func classificationCompleteHandler(request: VNRequest, error: Error?) {
+        DispatchQueue.main.async {
+            if error != nil {
+                print("Error: " + (error?.localizedDescription)!)
+                self.renderAlert(message: "noooo")
+                return
+            }
+            guard let observations = request.results as? [VNRecognizedObjectObservation] else {
+                self.renderAlert(message: "nuts")
+                return
+            }
+            /*
+            let classifications = observations[0...2]
+                .compactMap({ $0 as? VNClassificationObservation })
+                .map({ "\($0.identifier) \(String(format:" : %.2f", $0.confidence))" })
+                .joined(separator: "\n")
+     */
+            
+            for result in observations {
+                self.renderAlert(message: "hi")
+                
+                //if result.confidence >= self.confidence {
+                    //self.shouldScanNewHands = false
+                    let trackingRequest = VNTrackObjectRequest(detectedObjectObservation: result, completionHandler: self.handleHand)
+                    trackingRequest.trackingLevel = .accurate
+                    self.trackingRequests.append(trackingRequest)
+                //}
+            }
+    /*
+            print("Classifications: \(classifications)")
+            
+            DispatchQueue.main.async {
+                let topPrediction = classifications.components(separatedBy: "\n")[0]
+                let topPredictionName = topPrediction.components(separatedBy: ":")[0].trimmingCharacters(in: .whitespaces)
+                guard let topPredictionScore: Float = Float(topPrediction.components(separatedBy: ":")[1].trimmingCharacters(in: .whitespaces)) else { return }
+                
+                if self.cubeNode == nil {
+                    return
+                }
+                
+                if topPredictionName == "openFist" {
+                    self.animate()
+                }
+                else {
+                    self.stopAnimating()
+                }
+            }
+     */
+        }
     }
     
     func setupSceneView() {
@@ -46,16 +189,16 @@ public class LiveVC: UIViewController, ARSessionDelegate, ARSCNViewDelegate {
                                    .showPhysicsShapes,
                                    .showCameras*/
                                  ]
-        //arscn.showsStatistics = true
+        arscn.showsStatistics = true
     }
-        
+    /*
     func addTapGestureToSceneView() {
         let tapGestureRecognizer = UITapGestureRecognizer(target: arscn, action: #selector(handleTap(rec:)))
         arscn.addGestureRecognizer(tapGestureRecognizer)
     }
+ */
     
-    // when you tap ON THE SCREEN
-    @objc func handleTap(rec: UIGestureRecognizer) {
+    func renderAlert() {
         let alert = UIAlertController(title: "This is a trumpet.", message: "Hopefully?", preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: NSLocalizedString("OK", comment: "Default action"), style: .default, handler: { _ in
             NSLog("The \"OK\" alert occured.")
@@ -63,8 +206,29 @@ public class LiveVC: UIViewController, ARSessionDelegate, ARSCNViewDelegate {
         vc.present(alert, animated: true, completion: nil)
     }
     
+    func renderAlert(message: String) {
+        let alert = UIAlertController(title: "This is a trumpet.", message: message, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: NSLocalizedString("OK", comment: "Default action"), style: .default, handler: { _ in
+            NSLog("The \"OK\" alert occured.")
+        }))
+        vc.present(alert, animated: true, completion: nil)
+    }
+    
+    // when you tap ON THE SCREEN
+    @objc func handleTap(rec: UIGestureRecognizer) {
+        renderAlert()
+    }
+    
+    // updates the coreML detection constantly
+    @objc func loopCoreMLUpdate() {
+        DispatchQueue.main.async {
+            self.updateCoreML()
+        }
+    }
+    
     // initially render the plane
     public func renderer(_ renderer: SCNSceneRenderer, didAdd node: SCNNode, for anchor: ARAnchor) {
+        /*
         guard let planeAnchor = anchor as? ARPlaneAnchor else { return }
 
         // Create a SceneKit plane to visualize the node using its position and extent.
@@ -84,8 +248,10 @@ public class LiveVC: UIViewController, ARSessionDelegate, ARSCNViewDelegate {
         
         // this is the trumpet we add?
         cubeNode = SCNNode(geometry: SCNBox(width: 0.1, height: 0.1, length: 0.1, chamferRadius: 0))
+        //addAnimation(node: cubeNode)
         //cubeNode.position = SCNVector3(-1, -1, 0) // SceneKit/AR coordinates are in meters
         node.addChildNode(cubeNode)
+ */
     }
     
     // Update the plane as we move around
