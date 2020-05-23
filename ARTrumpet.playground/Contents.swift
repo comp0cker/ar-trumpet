@@ -15,12 +15,15 @@ public class LiveVC: UIViewController, ARSessionDelegate, ARSCNViewDelegate {
     var cubeNode: SCNNode!
     private var visionRequests = [VNRequest]()
     var trackingRequests = [VNTrackObjectRequest]()
+    var imageTrackHandler = VNSequenceRequestHandler()
     
     private var timer: Timer! = Timer()
     private var handState: String = "none"
     let handsModel = HandsNew().model
     var handBox: SCNBox!
-    var confidence: Float = 0.3
+    var shouldScanNewHands: Bool = true
+    var boxOnScreen: Bool = false
+    var confidence: Float = 0.1
     
     var animating: Bool = false
 
@@ -49,7 +52,7 @@ public class LiveVC: UIViewController, ARSessionDelegate, ARSCNViewDelegate {
         // addCoachingOverlay()
         // addTapGestureToSceneView()
         setupCoreML()
-        timer = Timer.scheduledTimer(timeInterval: 0.1, target: self, selector: #selector(loopCoreMLUpdate), userInfo: nil, repeats: true)
+        timer = Timer.scheduledTimer(timeInterval: 0.3, target: self, selector: #selector(loopCoreMLUpdate), userInfo: nil, repeats: true)
     }
     
     func setupCoreML() {
@@ -71,7 +74,11 @@ public class LiveVC: UIViewController, ARSessionDelegate, ARSCNViewDelegate {
         let deviceOrientation = UIDevice.current.orientation.getImagePropertyOrientation()
         let imageRequestHandler = VNImageRequestHandler(cvPixelBuffer: pixbuff!, orientation: deviceOrientation,options: [:])
         do {
-            try imageRequestHandler.perform(self.visionRequests)
+            if shouldScanNewHands {
+                try imageRequestHandler.perform(self.visionRequests)
+            } else {
+                try imageTrackHandler.perform(trackingRequests, on: pixbuff!)
+            }
         } catch {
             renderAlert(message: "imageRequestHandler processing failed")
         }
@@ -84,6 +91,7 @@ public class LiveVC: UIViewController, ARSessionDelegate, ARSCNViewDelegate {
                 return
             }
             
+            /*
             if self.trackingRequests.count > 0 {
                 for i in 0...self.trackingRequests.count - 1 {
                     
@@ -92,6 +100,7 @@ public class LiveVC: UIViewController, ARSessionDelegate, ARSCNViewDelegate {
                     }
                 }
             }
+ */
             
             //guard observation.confidence >= self.confidence else {
             //    //arscn.removeMask(id: observation.uuid.uuidString)
@@ -108,17 +117,25 @@ public class LiveVC: UIViewController, ARSessionDelegate, ARSCNViewDelegate {
             
             let handbounds = observation.boundingBox.applying(translate).applying(transform)
             
-            let zoom = handbounds.size.width / 3.0
+            //let zoom = handbounds.size.width / 3.0
             
             //let fr = CGRect(x: handbounds.origin.x - zoom, y: handbounds.origin.y - zoom - 5, width: handbounds.size.width + 2*zoom, height: handbounds.size.height + 2*zoom)
             
-            self.handBox = SCNBox(width: handbounds.size.width + 2*zoom, height: handbounds.size.height + 2*zoom, length: 0.2, chamferRadius: 0)
-            self.handBox.materials.first?.diffuse.contents = UIColor.red.withAlphaComponent(0.5)
-            
-            let handBoxNode = SCNNode(geometry: self.handBox)
-            handBoxNode.position = SCNVector3Make(Float(handbounds.origin.x - zoom), Float(handbounds.origin.y - zoom - 5), 0)
-
-            self.arscn.scene.rootNode.addChildNode(handBoxNode)
+            if !self.boxOnScreen {
+                let handBox = SCNBox(width: 0.1, height: 0.1, length: 0.2, chamferRadius: 0)
+                //handBox.materials.first?.diffuse.contents = UIColor.red.withAlphaComponent(0.5)
+                
+                //self.renderAlert(message: "\(Float(handbounds.origin.x)), \(Float(handbounds.origin.y))")
+                
+                let handBoxNode = SCNNode(geometry: handBox)
+                handBoxNode.position = SCNVector3Make((Float(handbounds.origin.x) - 1000) / 1500, (Float(handbounds.origin.y) - 500) / 2000, -1)
+                
+                //self.arscn.pointOfView?.enumerateChildNodes{(node, stop) in node.removeFromParentNode()
+                self.arscn.pointOfView?.addChildNode(handBoxNode)
+            }
+            else {
+                self.arscn.pointOfView?.enumerateChildNodes{(node, stop) in node.position = SCNVector3Make((Float(handbounds.origin.x) - 1000) / 1500, (Float(handbounds.origin.y) - 500) / 2000, -1)}
+            }
         }
     }
     
@@ -139,16 +156,19 @@ public class LiveVC: UIViewController, ARSessionDelegate, ARSCNViewDelegate {
                 .map({ "\($0.identifier) \(String(format:" : %.2f", $0.confidence))" })
                 .joined(separator: "\n")
      */
+            if observations.count == 0 {
+                self.shouldScanNewHands = true
+            }
             
             for result in observations {
-                self.renderAlert(message: "hi")
+                //self.renderAlert(message: "hi")
                 
-                //if result.confidence >= self.confidence {
-                    //self.shouldScanNewHands = false
+                if result.confidence >= 0 {
+                    self.shouldScanNewHands = false
                     let trackingRequest = VNTrackObjectRequest(detectedObjectObservation: result, completionHandler: self.handleHand)
                     trackingRequest.trackingLevel = .accurate
                     self.trackingRequests.append(trackingRequest)
-                //}
+            }
             }
     /*
             print("Classifications: \(classifications)")
